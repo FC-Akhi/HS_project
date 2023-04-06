@@ -1,0 +1,112 @@
+import numpy as np
+import ripser
+import os
+from PIL import Image
+from xgboost import XGBClassifier
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import accuracy_score
+
+# Set up the file paths
+main_folder = os.path.abspath(os.path.join(os.pardir))
+data_folder = (main_folder  +"data")
+raw_data = ('/content/gdrive/My Drive/dataset/_raw/cityscapes_data')
+
+# Load the data set
+images_dir = os.path.join(raw_data, 'images_1')
+labels_dir = os.path.join(raw_data, 'label')
+
+# Set the chunk size
+chunk_size = 10
+
+# Compute the persistent homology for each image-label pair
+X = []
+y = []
+
+for i, image_file in enumerate(os.listdir(images_dir)):
+    # Load the image and label files
+    image_path = os.path.join(images_dir, image_file)
+    label_file = os.path.splitext(image_file)[0] + "_right.jpg"
+    label_path = os.path.join(labels_dir, label_file)
+
+    # Load the image and label as numpy arrays
+    image = np.array(Image.open(image_path))
+    label = np.array(Image.open(label_path))
+
+    # Extract the shape of the data
+    n, m, k = image.shape
+
+    # Iterate over the image-label pairs in chunks
+    num_chunks = int(np.ceil(np.prod(image.shape[:2]) / chunk_size))
+    it = np.nditer(image[..., 0], flags=['multi_index'])
+    for chunk_idx in range(num_chunks):
+        # Extract the chunk of image and label data
+        image_data = []
+        label_data = []
+        for _ in range(chunk_size):
+            if not it.finished:
+                idx = it.multi_index
+                image_data.append(image[idx])
+                label_data.append(label[idx])
+                it.iternext()
+        image_data = np.array(image_data)
+        label_data = np.array(label_data)
+
+       
+        # Compute the persistence diagram
+        dgms = ripser.ripser(np.reshape(label_data, (-1, 3)))['dgms']
+        # Extract the topological features
+        if len(dgms) == 0:
+            num_components = 0
+            num_loops = 0
+            num_voids = 0
+        else:
+            num_components = len(dgms[0])
+            num_loops = len(dgms[1])
+            num_voids = len(dgms[2]) if len(dgms) > 2 else 0
+
+        # Append the topological features to the training data
+        X.append([num_components, num_loops, num_voids])
+        y.append(i-1)
+
+        print(f"X: {X}")
+        print(f"y: {y}")
+
+X = np.array(X)
+y = np.array(y)
+
+# Split the data into training and testing sets
+X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2)
+sample_weight = np.ones(len(y_train))
+y_train = y_train.ravel()
+y_train = y_train.reshape(-1, 1)
+# if 0 in y_train:
+#     sample_weight[y_train == 0] = 0.01
+
+print(sample_weight.shape)
+print(y_train.shape)
+print(X_train.shape)
+
+model = XGBClassifier(n_estimators=4, 
+                        eta=1.31,
+                        subsample=1, 
+                        colsample_bytree=0.5, 
+                        max_depth=15, 
+                        min_child_weight=1, 
+                        max_delta_step=1,
+                        gamma=0,
+                        reg_lambda=0.4,
+                        reg_alpha=0,
+                        num_parallel_tree=10,
+                        random_state=42,
+                        tree_method='gpu_hist',
+                        objective='multi:softmax'
+                    )
+
+
+print(len(np.unique(y_train)))
+print(len(np.unique(y_test)))
+model.fit(X_train, y_train)
+
+y_pred = model.predict(X_test)
+
+accuracy_score(y_test, y_pred)
