@@ -1,3 +1,10 @@
+# Collab only
+from google.colab import drive
+drive.mount('/content/gdrive')
+
+# uncomment this part for installing ripser
+#!pip install ripser --upgrade
+
 import numpy as np
 import ripser
 import os
