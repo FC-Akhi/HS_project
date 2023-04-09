@@ -1,0 +1,86 @@
+import os
+import numpy as np
+import scipy
+from xgboost import XGBClassifier
+
+from sklearn.decomposition import PCA
+from sklearn.metrics import accuracy_score
+from sklearn.model_selection import cross_val_score, StratifiedKFold
+
+
+main_folder = os.path.abspath(os.path.join(os.pardir))
+data_folder = (main_folder  +"data")
+raw_data = ('/content/gdrive/My Drive/dataset/_raw/')
+# main_folder = os.path.abspath(os.path.join(os.pardir))[:-10]
+data_folder = (main_folder + "/" +"dataset")
+saved_models_folder = (data_folder + "/" + "saved_models")
+# raw_data = (data_folder + "/" + "_raw")
+processed_data = (data_folder + "/" + "processed")
+baseline_data = (saved_models_folder + "/" + "baseline")
+test_models = (saved_models_folder + "/" + "test_models")
+
+
+
+# We will use only Pavia University
+pavia_u = scipy.io.loadmat(raw_data + '/' + 'PaviaU.mat')['paviaU']
+pavia_u_gt = scipy.io.loadmat(raw_data + "/" + "PaviaU_gt.mat")['paviaU_gt']
+
+# Reshape into a two dimensional matrix
+n_samples = pavia_u.shape[0] * pavia_u.shape[1]
+n_bands = pavia_u.shape[2]
+pavia_reshaped = pavia_u.reshape(n_samples, n_bands)
+
+pavia_reshaped.shape
+
+
+# Set the number of pixels to select for training from each class
+n_train_pixels = 200
+
+# Get the unique labels from the ground truth data
+labels = np.unique(pavia_u_gt)
+
+# Initialize empty arrays to store the training and testing data
+X_train = np.empty((0, n_bands))
+X_test = np.empty((0, n_bands))
+y_train = []
+y_test = []
+
+
+# Loop over each label and randomly select pixels for training and testing
+for label in labels:
+    # Get the indices of all pixels with the current label
+    label_indices = np.concatenate(np.where(pavia_u_gt == label))
+    
+    if len(label_indices) == 0:
+        continue
+    
+    # Shuffle the indices to randomize the order
+    np.random.shuffle(label_indices)
+    
+    # Select the first n_train_pixels indices for training
+    train_indices = label_indices[:n_train_pixels]
+    # Select the remaining indices for testing
+    test_indices = label_indices[n_train_pixels:]
+    
+    # Add the training data to the X_train and y_train arrays
+    X_train = np.vstack((X_train, pavia_reshaped[train_indices]))
+    # y_train = np.hstack((y_train, pavia_u_gt[train_indices]))
+    y_train += pavia_u_gt[train_indices].tolist()
+
+    # Add the testing data to the X_test and y_test arrays
+    X_test = np.vstack((X_test, pavia_reshaped[test_indices]))
+    # y_test = np.hstack((y_test, pavia_u_gt[test_indices]))
+    y_test += pavia_u_gt[test_indices].tolist()
+
+# Convert y_train to a NumPy array
+y_train = np.array(y_train)
+y_test = np.array(y_test)
+
+# Create the XGBClassifier and fit it to the training data
+xgb = XGBClassifier(booster='gbtree', tree_method='gpu_hist', objective='rank:pairwise', num_class=len(labels))
+xgb.fit(X_train, y_train)
+
+# Predict the labels for the testing data and calculate the accuracy score
+y_pred = xgb.predict(X_test)
+accuracy = accuracy_score(y_test, y_pred)
+print("Accuracy score: ", accuracy)
